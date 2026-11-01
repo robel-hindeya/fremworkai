@@ -11,7 +11,7 @@
     "dev:api": "npm run dev --workspace=@fremwork/api",
     "start:api": "npm run start:prod --workspace=@fremwork/api",
     "start:web": "npm start --workspace=@fremwork/web",
-    "build:web": "npm run build --workspace=@fremwork/web",
+    "build:web": "npm run build --workspace=@fremwork/web && node scripts/postbuild-web.js",
     "build:api": "npm run build --workspace=@fremwork/api",
     "build:types": "npm run build --workspace=@fremwork/types",
     "build": "npm run build:types && npm run build:api && npm run build:web",
