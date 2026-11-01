@@ -1,69 +1,67 @@
-# Fremwork — app frontend
+# Fremwork — Autonomous Financial AI Assistant & Workspace
 
-The authenticated Fremwork app: an AI financial assistant workspace for business owners and finance teams. Frontend only, built with Next.js (App Router) and TypeScript. All figures are demo data for **Harbor & Pine Co.**; there is no backend yet.
+An enterprise financial workspace for business owners, CFOs, and finance teams.
+Built according to the official **Fremwork Backend Design** by Robel Hindeya (@selam).
 
-## Run it
+---
 
+## Architecture Overview
+
+```
+apps/
+  ├── api/             # NestJS 10 API with global prefix /v1 (Port 4000)
+  │                    # - Unified Ledger (stored in integer minor units / cents)
+  │                    # - AI Assistant: Claude Tool Use & exact math calculations
+  │                    # - SSE Streaming answer blocks (text, table, chart, calc, recommendation)
+  │                    # - BullMQ queue runner (source.sync, upload.parse, task.run, export.build)
+  │                    # - Swagger OpenAPI Docs at http://localhost:4000/v1/docs
+  └── web/             # Next.js 16.4.3 (App Router) Frontend (Port 3000)
+                       # - 35 routes, optimistic state updates, zero CVEs
+                       # - Proxies /v1/:path* to NestJS backend API
+packages/
+  └── types/           # Shared TypeScript domain models (@fremwork/types)
+                       # - MinorUnit integer type, AnswerBlock, Workspace, Profile, etc.
+supabase/
+  └── migrations/      # 00001_initial_schema.sql (13 Postgres tables with RLS isolation)
+```
+
+---
+
+## Getting Started
+
+### 1. Install Dependencies
 ```bash
 npm install
-npm run dev
 ```
 
-Open http://localhost:3000. It redirects to the AI assistant at `/chat`.
-
-Other scripts: `npm run build`, `npm start`, `npm run typecheck`.
-
-## Screens
-
-| Area | Routes |
-| --- | --- |
-| Auth | `/sign-in`, `/sign-up`, `/verify`, `/forgot-password`, `/reset-password` |
-| First run | `/onboarding` (company → connect data → preferences → ready) |
-| AI assistant | `/chat` (new chat), `/chat/[id]` (conversation) |
-| Workspace | `/search`, `/projects`, `/projects/[id]`, `/reports`, `/scheduled` |
-| Financial tools | `/overview`, `/transactions`, `/analytics`, `/budgets`, `/goals`, `/data-sources` |
-| Account | `/settings` (`?tab=profile·company·finance·ai·notifications·security·billing`), `/help` |
-| System | 404 page, app error page, global error page, loading skeleton, offline banner |
-
-Desktop uses a collapsible sidebar (groups fold, state is remembered). Below 860px the sidebar is replaced by a bottom tab bar: Chat · Overview · Activity · Reports · More.
-
-## Demo behaviour
-
-| Try this | What happens |
-| --- | --- |
-| Sign in with any email and `demo1234` | Opens the app. Any other password shows an error; 3 wrong tries pause sign-in. |
-| Sign up with `selam@harborpine.co` | “Account already exists” error. |
-| Verification code `482913` | Continues to onboarding. Other codes show an error; 5 wrong codes expire it. |
-| Onboarding → Bank feed → Connect | Fails the first time, then connects on retry. |
-| Chat: include the word “fail” | The answer fails with a Retry button. |
-| Chat: ask about “March 2025” | Fremwork explains it has no data for that period. |
-| Chat: ask about “usage limit” | Shows the monthly limit reached state. |
-| Chat: attach a `.docx` or a file over 25 MB | Upload error message. |
-| Reports → Export a “Year to date” period | Fails once, then succeeds on Try again. |
-| Data sources → Xero → Connect | Fails once with an access error. |
-| Scheduled → run “Revenue report” | Fails because the bank feed is disconnected. |
-| Overview → “Preview: no data connected yet” | Shows the empty state. |
-| Settings → Security → Change password | Current password is `demo1234`. |
-
-Every form (add transaction, create budget, create goal, new project, new scheduled task, export, delete, sign out, change password, delete workspace) validates on submit with inline messages, a summary, and a success state.
-
-## Structure
-
-```
-src/
-  app/
-    (auth)/        sign-in, sign-up, verify, forgot-password, reset-password
-    (app)/         sidebar + tab bar layout, all workspace pages, loading/error
-    onboarding/
-    layout.tsx     fonts (Geist), toasts
-    globals.css    design tokens and components (Fremwork design system)
-  components/      shell, chat store, composer, answers, charts, dialogs, forms, ui
-  lib/             demo data, formatting and validation helpers
-public/brand/      Fremwork logo files
+### 2. Build Monorepo Workspaces
+```bash
+npm run build:types
+npm run build:api
+npm run build:web
 ```
 
-## Next steps for the backend
+### 3. Start NestJS Backend API (Port 4000)
+```bash
+npm run start:api
+# Or for live development watch mode:
+npm run dev:api
+```
+- API Base: `http://localhost:4000/v1`
+- Swagger OpenAPI Documentation: `http://localhost:4000/v1/docs`
 
-- Replace `src/lib/data.ts` with API calls (NestJS) and Supabase auth.
-- Swap the simulated answers in `src/components/chat-store.tsx` for streaming responses.
-- Wire uploads, exports, connections and scheduled tasks to real services.
+### 4. Start Next.js Frontend (Port 3000)
+```bash
+npm run dev:web
+```
+Open [http://localhost:3000](http://localhost:3000). It redirects to `/chat`.
+
+---
+
+## Core Principles
+
+1. **Integer Minor Units**: All monetary amounts are strictly stored as integer cents (`amount_minor BIGINT`, `MinorUnit`). Floating-point arithmetic on currency is forbidden.
+2. **Multi-Tenancy Isolation**: Every table and request enforces `workspace_id`. Requests validate `X-Workspace-Id` header and Supabase Row-Level Security (RLS).
+3. **AI Never Guesses**: The AI model (Claude via Anthropic API) is bound by deterministic calculation tools (`calculate`, `query_transactions`, `simulate_scenario`).
+4. **Structured Answer Blocks**: Answers stream via Server-Sent Events (SSE) as typed blocks (`text`, `table`, `calc`, `recommendation`), rather than monolithic markdown prose.
+5. **Background Offloading**: Heavy tasks (bank sync, file OCR/parsing, scheduled runs) are processed off the request path via BullMQ background workers.
