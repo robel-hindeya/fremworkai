@@ -18,7 +18,9 @@
     "forceConsistentCasingInFileNames": false,
     "noFallthroughCasesInSwitch": false,
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@fremwork/types": ["../../packages/types/src/index.ts"],
+      "@fremwork/types/*": ["../../packages/types/src/*"]
     }
   }
 }
