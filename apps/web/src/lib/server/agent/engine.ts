@@ -18,7 +18,204 @@ export interface AgentResponse {
   actionsTaken: string[];
 }
 
+function getGeminiTools() {
+  return [
+    {
+      name: "calculate",
+      description: "Perform exact arithmetic calculation. Claude and Gemini must never guess numbers or mental math.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          expression: { type: "STRING", description: "Mathematical expression (e.g. '539500 / 178300')" },
+          label: { type: "STRING", description: "What this calculation computes" },
+        },
+        required: ["expression"],
+      },
+    },
+    {
+      name: "get_financial_health",
+      description: "Fetch real-time cash balance, burn rate, runway months, revenue, expenses, and net margin.",
+      parameters: {
+        type: "OBJECT",
+        properties: {},
+      },
+    },
+    {
+      name: "search_transactions",
+      description: "Search or filter company transactions from the ledger.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          search: { type: "STRING", description: "Search keyword for payee name or memo" },
+          category: { type: "STRING", description: "Category name filter (Software, Payroll, Travel, etc.)" },
+          limit: { type: "NUMBER", description: "Max records to fetch (default 10)" },
+        },
+      },
+    },
+    {
+      name: "add_transaction",
+      description: "Record a new expense or revenue transaction into the ledger.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          name: { type: "STRING", description: "Payee or customer name" },
+          amount: { type: "NUMBER", description: "Amount in USD (positive for income, negative for expense)" },
+          category: { type: "STRING", description: "Category name (Software, Marketing, Travel, etc.)" },
+          memo: { type: "STRING", description: "Description or purpose" },
+        },
+        required: ["name", "amount", "category"],
+      },
+    },
+    {
+      name: "get_budgets_status",
+      description: "List all department budgets and their utilization percentage.",
+      parameters: {
+        type: "OBJECT",
+        properties: {},
+      },
+    },
+    {
+      name: "run_scenario_analysis",
+      description: "Simulate runway impact under hiring, spending increase, or revenue drops.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          monthlyCostChange: { type: "NUMBER", description: "Monthly change in expenses (+ for new hire, - for savings)" },
+          monthlyRevenueChange: { type: "NUMBER", description: "Monthly change in revenue (+ for growth, - for churn)" },
+        },
+      },
+    },
+  ];
+}
+
+async function executeGeminiTool(name: string, args: any): Promise<any> {
+  switch (name) {
+    case "calculate": {
+      try {
+        const sanitized = String(args.expression || "0").replace(/[^0-9+\-*/(). ]/g, "");
+        const val = Function(`'use strict'; return (${sanitized})`)();
+        return { expression: args.expression, result: val, label: args.label || "Calculation" };
+      } catch (err: any) {
+        return { error: `Calculation failed: ${err.message}` };
+      }
+    }
+    case "get_financial_health":
+      return FINANCIAL_AGENT_TOOLS.getFinancialHealth.execute({});
+    case "search_transactions":
+      return FINANCIAL_AGENT_TOOLS.searchTransactions.execute(args || {});
+    case "add_transaction":
+      return FINANCIAL_AGENT_TOOLS.addTransaction.execute(args || {});
+    case "get_budgets_status":
+      return FINANCIAL_AGENT_TOOLS.getBudgetsStatus.execute({});
+    case "run_scenario_analysis":
+      return FINANCIAL_AGENT_TOOLS.runScenarioAnalysis.execute(args || {});
+    default:
+      return { error: `Unknown tool ${name}` };
+  }
+}
+
+async function runGeminiAgent(prompt: string, apiKey: string, model: string = "gemini-2.5-flash"): Promise<AgentResponse | null> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const systemInstruction = {
+    parts: [
+      {
+        text: `You are Fremwork AI, an elite autonomous financial copilot for CFOs, founders, and accountants.
+You calculate with mathematical precision and NEVER guess numbers. You have access to tools for querying transactions, calculating arithmetic, checking budgets, and running financial scenarios.
+Always invoke the calculate tool for arithmetic steps.
+Be concise, authoritative, and provide actionable financial advice.
+Format your answer using clean GitHub-style Markdown with tables and bullet points where helpful.`,
+      },
+    ],
+  };
+
+  const tools = [{ functionDeclarations: getGeminiTools() }];
+  const contents: any[] = [{ role: "user", parts: [{ text: prompt }] }];
+  const toolCalls: { tool: string; args: any; result: any }[] = [];
+  const actionsTaken: string[] = [];
+
+  let turnCount = 0;
+  while (turnCount < 4) {
+    turnCount++;
+    const payload = { systemInstruction, contents, tools };
+
+    let response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.status === 503 || response.status === 429) {
+      const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`;
+      response = await fetch(fallbackUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
+
+    if (!response.ok) return null;
+
+    const data: any = await response.json();
+    const candidate = data.candidates?.[0];
+    if (!candidate || !candidate.content) return null;
+
+    const parts = candidate.content.parts || [];
+    const functionCallParts = parts.filter((p: any) => p.functionCall);
+
+    if (functionCallParts.length > 0) {
+      contents.push({ role: "model", parts });
+      const responseParts: any[] = [];
+
+      for (const fcp of functionCallParts) {
+        const fn = fcp.functionCall;
+        const res = await executeGeminiTool(fn.name, fn.args);
+        toolCalls.push({ tool: fn.name, args: fn.args, result: res });
+        if (fn.name === "add_transaction" && res.message) {
+          actionsTaken.push(res.message);
+        }
+        responseParts.push({
+          functionResponse: {
+            name: fn.name,
+            response: { output: res },
+          },
+        });
+      }
+      contents.push({ role: "user", parts: responseParts });
+    } else {
+      // Final response text
+      const textParts = parts.filter((p: any) => p.text).map((p: any) => p.text).join("\n").trim();
+      const pLower = prompt.toLowerCase();
+      let kind: AgentResponse["kind"] = "performance";
+      if (/hire|scenario|runway/i.test(pLower)) kind = "forecast";
+      else if (/risk|exposure|overdue/i.test(pLower)) kind = "risks";
+      else if (/spend|expens|cost|software/i.test(pLower)) kind = "expenses";
+
+      return {
+        kind,
+        thought: `Executed ${toolCalls.length} financial tool call(s) with Google Gemini AI.`,
+        toolCalls,
+        text: textParts,
+        actionsTaken,
+      };
+    }
+  }
+  return null;
+}
+
 export async function runFinancialAgent(prompt: string, mode: string = "Balanced"): Promise<AgentResponse> {
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (geminiKey) {
+    try {
+      const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+      const res = await runGeminiAgent(prompt, geminiKey, geminiModel);
+      if (res && res.text) {
+        return res;
+      }
+    } catch {
+      // Fall through to deterministic agent
+    }
+  }
+
   const p = prompt.toLowerCase();
   const toolCalls: { tool: string; args: any; result: any }[] = [];
   const actionsTaken: string[] = [];

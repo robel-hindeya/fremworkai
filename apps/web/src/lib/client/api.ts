@@ -16,31 +16,22 @@ export class ApiError extends Error {
   }
 }
 
-// In browser, relative /v1/... is proxied by Next.js rewrites to http://localhost:4000/v1
-// Or direct env NEXT_PUBLIC_API_URL can be provided.
-const BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  (typeof window === 'undefined' ? (process.env.INTERNAL_API_URL || 'http://localhost:4000') : '');
+// In browser, relative /api/... and /v1/... route to the Next.js origin
+// Or direct env NEXT_PUBLIC_API_URL can be provided to point to external backend.
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 function normalizeEndpoint(path: string): string {
   if (path.startsWith('http://') || path.startsWith('https://')) {
     return path;
   }
 
-  let clean = path;
-  if (clean.startsWith('/api/')) {
-    clean = clean.replace(/^\/api\//, '/v1/');
-    // Handle alias mappings
-    if (clean.startsWith('/v1/scheduled')) {
-      clean = clean.replace('/v1/scheduled', '/v1/tasks');
-    }
-    if (clean.startsWith('/v1/chat')) {
-      clean = clean.replace('/v1/chat', '/v1/conversations');
-    }
-  } else if (!clean.startsWith('/v1/')) {
-    clean = `/v1/${clean.replace(/^\//, '')}`;
+  // If path already starts with /api/, preserve it so Next.js route handlers are called
+  if (path.startsWith('/api/')) {
+    return BASE_URL ? `${BASE_URL}${path}` : path;
   }
 
+  // Ensure leading slash
+  const clean = path.startsWith('/') ? path : `/${path}`;
   return BASE_URL ? `${BASE_URL}${clean}` : clean;
 }
 

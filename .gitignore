@@ -11,3 +11,5 @@ npm-debug.log*
 .vercel
 data/*.sqlite*
 data/*.db*
+apps/web/data/
+*.sqlite*
