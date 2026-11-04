@@ -8,8 +8,8 @@ async function bootstrap() {
   const logger = new Logger('FremworkBootstrap');
   const app = await NestFactory.create(AppModule);
 
-  // Set global API prefix
-  app.setGlobalPrefix('v1');
+  // Set global API prefix (excluding root / and /v1 for index & swagger redirect)
+  app.setGlobalPrefix('v1', { exclude: ['/', 'v1'] });
 
   // Enable CORS for frontend & Vercel deployments
   const allowedOrigins = process.env.CORS_ORIGINS
