@@ -16,12 +16,5 @@
     "build:types": "npm run build --workspace=@fremwork/types",
     "build": "npm run build:types && npm run build:api && npm run build:web",
     "typecheck": "npm run typecheck --workspaces"
-  },
-  "dependencies": {
-    "next": "^16.4.3"
-  },
-  "devDependencies": {
-    "react": "19.0.0",
-    "react-dom": "19.0.0"
   }
 }
