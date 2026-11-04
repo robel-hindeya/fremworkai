@@ -16,6 +16,8 @@ export interface ToolCallRecord {
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
   private anthropic: Anthropic | null = null;
+  private geminiApiKey: string | null = null;
+  private geminiModel: string = 'gemini-3.5-flash';
 
   private conversations: Conversation[] = [
     {
@@ -43,12 +45,22 @@ export class ChatService {
     private readonly budgetsService: BudgetsService,
     private readonly workersService: WorkersService,
   ) {
+    // 1. Google Gemini AI configuration
+    this.geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || null;
+    this.geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+    if (this.geminiApiKey) {
+      this.logger.log(`Google Gemini AI initialized with model ${this.geminiModel}`);
+    }
+
+    // 2. Anthropic Claude AI configuration
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (apiKey) {
       this.anthropic = new Anthropic({ apiKey });
       this.logger.log('Anthropic Claude AI initialized with API key.');
-    } else {
-      this.logger.log('No ANTHROPIC_API_KEY provided. Operating in deterministic tool-executing AI mode.');
+    }
+
+    if (!this.geminiApiKey && !this.anthropic) {
+      this.logger.log('No AI keys provided. Operating in deterministic tool-executing AI mode.');
     }
   }
 
@@ -326,9 +338,10 @@ export class ChatService {
     mode: ReasoningMode = 'Balanced',
     res: Response,
   ) {
+    const queryText = (text || '').trim();
     let convo = this.conversations.find((c) => c.id === conversationId && c.workspaceId === workspaceId);
     if (!convo) {
-      convo = this.createConversation(workspaceId, 'usr-1', text.slice(0, 48));
+      convo = this.createConversation(workspaceId, 'usr-1', (queryText || 'New conversation').slice(0, 48));
     }
 
     // Set SSE headers
@@ -340,10 +353,20 @@ export class ChatService {
     // Stream meta
     res.write(`event: meta\ndata: ${JSON.stringify({ mode, status: 'streaming' })}\n\n`);
 
-    const q = text.toLowerCase();
+    const q = queryText.toLowerCase();
     const blocks: AnswerBlock[] = [];
 
-    // Check if Claude API is available
+    // 1. Check if Gemini API is available
+    if (this.geminiApiKey) {
+      try {
+        const handled = await this.handleGeminiStream(workspaceId, text, res, blocks);
+        if (handled) return;
+      } catch (err: any) {
+        this.logger.error(`Gemini API error: ${err.message}. Trying next provider.`);
+      }
+    }
+
+    // 2. Check if Claude API is available
     if (this.anthropic) {
       try {
         await this.handleClaudeStream(workspaceId, text, res, blocks);
@@ -620,6 +643,333 @@ Always invoke the calculate tool for arithmetic steps. Return valid JSON blocks.
         }
         this.sendDone(res, response.usage.input_tokens, response.usage.output_tokens);
       }
+    }
+  }
+
+  private getGeminiToolDeclarations() {
+    return [
+      {
+        name: 'calculate',
+        description: 'Perform exact arithmetic calculation. Claude and Gemini must never guess numbers or mental math.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            expression: { type: 'STRING', description: 'Mathematical expression (e.g. "539500 / 178300")' },
+            label: { type: 'STRING', description: 'What this calculation computes' },
+          },
+          required: ['expression'],
+        },
+      },
+      {
+        name: 'query_transactions',
+        description: 'Search or filter company transactions from the unified ledger.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            q: { type: 'STRING', description: 'Search query for payee or memo' },
+            category: { type: 'STRING', description: 'Category name filter (Software, Travel, Payroll, etc.)' },
+            limit: { type: 'NUMBER', description: 'Max records to fetch (default 10)' },
+            type: { type: 'STRING', enum: ['all', 'income', 'expense'] },
+          },
+        },
+      },
+      {
+        name: 'record_transaction',
+        description: 'Record a new revenue or expense transaction into the unified ledger.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            payee: { type: 'STRING', description: 'Name of the payee or entity' },
+            amount_dollars: { type: 'NUMBER', description: 'Amount in USD (+ for revenue, - for expense)' },
+            category: { type: 'STRING', description: 'Category name' },
+            date: { type: 'STRING', description: 'ISO Date YYYY-MM-DD' },
+            memo: { type: 'STRING', description: 'Memo or description' },
+          },
+          required: ['payee', 'amount_dollars', 'category'],
+        },
+      },
+      {
+        name: 'get_financial_summary',
+        description: 'Fetch cash balance, October revenue, expenses, net profit, and runway months.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {},
+        },
+      },
+      {
+        name: 'get_budgets_status',
+        description: 'Fetch all department budget allocations, actual spend, and variance.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {},
+        },
+      },
+      {
+        name: 'create_budget',
+        description: 'Establish a new monthly department budget limit.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            category: { type: 'STRING', description: 'Department or category name' },
+            amount_dollars: { type: 'NUMBER', description: 'Monthly budget limit in USD' },
+            owner: { type: 'STRING', description: 'Department owner label' },
+          },
+          required: ['category', 'amount_dollars'],
+        },
+      },
+      {
+        name: 'simulate_scenario',
+        description: 'Simulate financial runway impact under hiring, spending increases, or revenue changes.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            monthly_expense_delta: { type: 'NUMBER', description: 'Change in monthly burn (+ for new hire, - for savings)' },
+            monthly_revenue_delta: { type: 'NUMBER', description: 'Change in monthly revenue (+ for growth, - for churn)' },
+          },
+        },
+      },
+    ];
+  }
+
+  private async handleGeminiStream(
+    workspaceId: string,
+    prompt: string,
+    res: Response,
+    blocks: AnswerBlock[],
+  ): Promise<boolean> {
+    if (!this.geminiApiKey) return false;
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.geminiModel}:generateContent?key=${this.geminiApiKey}`;
+    const systemInstruction = {
+      parts: [
+        {
+          text: `You are Fremwork AI, an elite autonomous financial copilot for CFOs, founders, and accountants.
+You calculate with mathematical precision and NEVER guess numbers. You have access to tools for querying transactions, calculating exact arithmetic, checking budgets, and running financial scenarios.
+Always invoke the calculate tool for arithmetic steps.
+Always return your final response strictly as a JSON array of blocks:
+[
+  { "type": "text", "text": "Markdown summary" },
+  { "type": "table", "head": [...], "rows": [[...]], "foot": [...] },
+  { "type": "calc", "working": "Step 1 = ...\\nStep 2 = ...", "result": "Final figure" },
+  { "type": "recommendation", "items": ["Action 1", "Action 2"] }
+]`,
+        },
+      ],
+    };
+
+    const tools = [{ functionDeclarations: this.getGeminiToolDeclarations() }];
+    const contents: any[] = [{ role: 'user', parts: [{ text: prompt }] }];
+    const calcBlocks: AnswerBlock[] = [];
+
+    let turnCount = 0;
+    let tokensIn = 0;
+    let tokensOut = 0;
+
+    while (turnCount < 5) {
+      turnCount++;
+      const payload = {
+        systemInstruction,
+        contents,
+        tools,
+      };
+
+      let response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      // Handle transient 503 or 429 spikes by retrying with flash-lite
+      if (response.status === 503 || response.status === 429) {
+        this.logger.warn(`Gemini ${this.geminiModel} returned status ${response.status}. Retrying with gemini-3.5-flash-lite fallback...`);
+        await new Promise((r) => setTimeout(r, 1000));
+        const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${this.geminiApiKey}`;
+        response = await fetch(fallbackUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (!response.ok) {
+        const errText = await response.text();
+        this.logger.error(`Gemini API error status ${response.status}: ${errText}`);
+        return false;
+      }
+
+      const data: any = await response.json();
+      const candidate = data.candidates?.[0];
+      if (!candidate || !candidate.content) {
+        return false;
+      }
+
+      tokensIn += data.usageMetadata?.promptTokenCount || 0;
+      tokensOut += data.usageMetadata?.candidatesTokenCount || 0;
+
+      const parts = candidate.content.parts || [];
+      const functionCallParts = parts.filter((p: any) => p.functionCall);
+
+      if (functionCallParts.length > 0) {
+        // Model requested one or more tool calls in this turn
+        contents.push({ role: 'model', parts });
+
+        const responseParts: any[] = [];
+        for (const fcp of functionCallParts) {
+          const fn = fcp.functionCall;
+          this.logger.log(`Gemini tool call: ${fn.name}(${JSON.stringify(fn.args)}) [id: ${fn.id || 'none'}]`);
+          const result = await this.executeTool(workspaceId, fn.name, fn.args);
+
+          if (fn.name === 'calculate' && fn.args?.expression && result?.result !== undefined) {
+            calcBlocks.push({
+              type: 'calc',
+              working: `${fn.args.label ? `${fn.args.label}: ` : ''}${fn.args.expression} = ${result.result}`,
+              result: String(result.result),
+            });
+          }
+
+          const respPayload: any = {
+            name: fn.name,
+            response: { output: result },
+          };
+          if (fn.id) {
+            respPayload.id = fn.id;
+          }
+          responseParts.push({ functionResponse: respPayload });
+        }
+
+        contents.push({
+          role: 'user',
+          parts: responseParts,
+        });
+        continue;
+      }
+
+      // Final response produced: filter out internal thought parts
+      const textParts = parts.filter((p: any) => p.text && !p.thought);
+      const combinedText = textParts.map((p: any) => p.text).join('\n').trim();
+
+      if (combinedText) {
+        this.parseAndSendResponseBlocks(combinedText, calcBlocks, res, blocks);
+      } else if (calcBlocks.length > 0) {
+        for (const cb of calcBlocks) {
+          this.sendBlock(res, cb, blocks);
+        }
+      }
+
+      this.sendDone(res, tokensIn, tokensOut);
+      return true;
+    }
+
+    return false;
+  }
+
+  private parseAndSendResponseBlocks(
+    text: string,
+    calcBlocks: AnswerBlock[],
+    res: Response,
+    blocks: AnswerBlock[],
+  ) {
+    let cleanText = text.trim();
+
+    // 1. Check if the output is a fenced JSON block
+    const jsonMatch = cleanText.match(/```(?:json)?\s*(\[\s*\{[\s\S]*\}\s*\])\s*```/);
+    if (jsonMatch) {
+      cleanText = jsonMatch[1].trim();
+    } else if (cleanText.startsWith('```json')) {
+      cleanText = cleanText.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
+    } else if (cleanText.startsWith('```')) {
+      cleanText = cleanText.replace(/^```\s*/, '').replace(/\s*```$/, '').trim();
+    }
+
+    // Attempt direct JSON array parsing
+    try {
+      const parsed = JSON.parse(cleanText);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        let hasCalc = false;
+        for (const blk of parsed) {
+          if (blk.type === 'calc') hasCalc = true;
+          this.sendBlock(res, blk, blocks);
+        }
+        if (!hasCalc && calcBlocks.length > 0) {
+          for (const cb of calcBlocks) {
+            this.sendBlock(res, cb, blocks);
+          }
+        }
+        return;
+      }
+    } catch {
+      // Not pure JSON; fall through to intelligent markdown/block extraction
+    }
+
+    // 2. Intelligent Markdown to Typed Blocks Extraction
+    // First, emit any calculation blocks from tool execution
+    for (const cb of calcBlocks) {
+      this.sendBlock(res, cb, blocks);
+    }
+
+    // Check for markdown tables: lines starting with |
+    const lines = text.split('\n');
+    const narrativeLines: string[] = [];
+    const tableLines: string[] = [];
+    const recLines: string[] = [];
+    let inTable = false;
+    let inRec = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (/^(?:###?\s*)?recommendation/i.test(trimmed)) {
+        inRec = true;
+        inTable = false;
+        continue;
+      }
+
+      if (inRec) {
+        if (/^[-*•]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {
+          recLines.push(trimmed.replace(/^[-*•\d.]+\s*/, ''));
+        } else if (trimmed) {
+          recLines.push(trimmed);
+        }
+        continue;
+      }
+
+      if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+        inTable = true;
+        tableLines.push(trimmed);
+      } else {
+        if (inTable && trimmed === '') {
+          inTable = false;
+        } else {
+          narrativeLines.push(line);
+        }
+      }
+    }
+
+    // Emit narrative text block
+    const narrativeText = narrativeLines.join('\n').trim();
+    if (narrativeText) {
+      this.sendBlock(res, { type: 'text', text: narrativeText }, blocks);
+    }
+
+    // Parse and emit table block if found
+    if (tableLines.length >= 2) {
+      const parseRow = (r: string) =>
+        r
+          .split('|')
+          .slice(1, -1)
+          .map((c) => c.trim());
+      const head = parseRow(tableLines[0]);
+      // Skip delimiter row (e.g. |---|---|)
+      const dataRows = tableLines.slice(1).filter((r) => !/^[|\s-:]+$/.test(r));
+      const rows = dataRows.map(parseRow);
+
+      if (head.length > 0 && rows.length > 0) {
+        this.sendBlock(res, { type: 'table', head, rows }, blocks);
+      }
+    }
+
+    // Emit recommendation block if found
+    if (recLines.length > 0) {
+      this.sendBlock(res, { type: 'recommendation', items: recLines }, blocks);
     }
   }
 

@@ -74,13 +74,14 @@ export class ChatController {
   async streamMessage(
     @CurrentWorkspaceId() wsId: string,
     @Param('id') id: string,
-    @Body() body: { text: string; mode?: ReasoningMode; uploadIds?: string[] },
+    @Body() body: { text?: string; content?: string; message?: string; mode?: ReasoningMode; uploadIds?: string[] },
     @Res() res: Response,
   ) {
+    const text = body.text || body.content || body.message || '';
     return this.chatService.streamResponse(
       wsId,
       id,
-      body.text,
+      text,
       body.mode || 'Balanced',
       res,
     );

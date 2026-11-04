@@ -11,9 +11,24 @@ async function bootstrap() {
   // Set global API prefix
   app.setGlobalPrefix('v1');
 
-  // Enable CORS for frontend
+  // Enable CORS for frontend & Vercel deployments
+  const allowedOrigins = process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+    : ['http://localhost:3000', 'https://app.fremwork.com', 'https://staging.app.fremwork.com'];
+
   app.enableCors({
-    origin: ['http://localhost:3000', 'https://app.fremwork.com', 'https://staging.app.fremwork.com'],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (
+        allowedOrigins.includes(origin) ||
+        origin.endsWith('.vercel.app') ||
+        origin.includes('localhost') ||
+        origin.includes('127.0.0.1')
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Workspace-Id'],
