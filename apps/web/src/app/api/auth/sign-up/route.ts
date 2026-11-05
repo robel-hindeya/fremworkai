@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     const body = await res.json();
 
     if (!res.ok) {
-      const error = body?.error_code === "user_already_exists" ? EXISTS : authError(body, "We couldn't create your account. Try again.");
+      const error = body?.error_code === "user_already_exists" ? EXISTS : res.status === 429 ? "Too many sign-ups right now, so we couldn't send your confirmation email. Wait a while and try again." : authError(body, "We couldn't create your account. Try again.");
       return NextResponse.json({ success: false, error }, { status: res.status });
     }
 
