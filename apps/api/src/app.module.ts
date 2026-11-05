@@ -17,7 +17,7 @@ import { WorkersModule } from './modules/workers/workers.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../../.env'] }),
     SupabaseModule,
     HealthModule,
     WorkspacesModule,
