@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authed } from "@/lib/server/with-user";
 import { runFinancialAgent } from "@/lib/server/agent/engine";
 import { ChatRepo } from "@/lib/server/repositories/chat";
 import { TasksRepo } from "@/lib/server/repositories/tasks";
@@ -6,7 +7,7 @@ import { TasksRepo } from "@/lib/server/repositories/tasks";
 export const runtime = "nodejs";
 
 /** Run a task now: send its prompt to the AI and save the result as a new chat. */
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const POST = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
     const task = TasksRepo.getAll().find((t) => t.id === id);
@@ -28,9 +29,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});
 
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PUT = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
     const body = await req.json();
@@ -40,9 +41,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
     const ok = TasksRepo.delete(id);
@@ -51,4 +52,4 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});

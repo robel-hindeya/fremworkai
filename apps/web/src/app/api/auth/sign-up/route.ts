@@ -1,41 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/server/db";
-import { hashPassword } from "@/lib/server/password";
+import { authError, authFetch, setSessionCookies, verifyAccessToken } from "@/lib/server/auth";
 
 export const runtime = "nodejs";
+
+const EXISTS = "An account with that email already exists. Sign in instead.";
 
 export async function POST(req: NextRequest) {
   try {
     const { email, password, name, company } = await req.json();
-
     if (!email || !password) {
       return NextResponse.json({ success: false, error: "Please enter your email and password." }, { status: 400 });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-    const db = getDb();
+    const redirect = encodeURIComponent(`${req.nextUrl.origin}/auth/callback`);
+    const res = await authFetch(`/signup?redirect_to=${redirect}`, {
+      method: "POST",
+      body: JSON.stringify({ email: email.trim().toLowerCase(), password, data: { name, company } }),
+    });
+    const body = await res.json();
 
-    if (db.prepare("SELECT id FROM users WHERE email = ?").get(cleanEmail)) {
-      return NextResponse.json({ success: false, error: "An account with that email already exists. Sign in instead." }, { status: 409 });
+    if (!res.ok) {
+      const error = body?.error_code === "user_already_exists" ? EXISTS : authError(body, "We couldn't create your account. Try again.");
+      return NextResponse.json({ success: false, error }, { status: res.status });
     }
 
-    const id = `usr-${Date.now().toString(36)}`;
-    const safeUser = { id, email: cleanEmail, name: name || cleanEmail.split("@")[0], company: company || "", role: "Owner" };
+    // With email confirmation on, Supabase hides duplicates by returning a user with no identities.
+    if (!body.access_token && Array.isArray(body.identities) && body.identities.length === 0) {
+      return NextResponse.json({ success: false, error: EXISTS }, { status: 409 });
+    }
 
-    db.prepare(`
-      INSERT INTO users (id, email, password_hash, name, company, role, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, cleanEmail, hashPassword(password), safeUser.name, safeUser.company, safeUser.role, new Date().toISOString());
+    if (!body.access_token) {
+      return NextResponse.json({ success: true, needsConfirmation: true }, { status: 201 });
+    }
 
-    const response = NextResponse.json({ success: true, user: safeUser }, { status: 201 });
-    response.cookies.set("fremwork_session", id, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7,
-      path: "/",
-    });
-
+    const response = NextResponse.json({ success: true, user: await verifyAccessToken(body.access_token) }, { status: 201 });
+    setSessionCookies(response, body);
     return response;
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });

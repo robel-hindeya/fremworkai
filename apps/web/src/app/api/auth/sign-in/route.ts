@@ -1,36 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/server/db";
-import { verifyPassword } from "@/lib/server/password";
+import { authError, authFetch, setSessionCookies, verifyAccessToken } from "@/lib/server/auth";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
     const { email, password } = await req.json();
-
     if (!email || !password) {
       return NextResponse.json({ success: false, error: "Please enter your email and password." }, { status: 400 });
     }
 
-    const user = getDb().prepare("SELECT * FROM users WHERE email = ?").get(email.trim().toLowerCase()) as any;
+    const res = await authFetch("/token?grant_type=password", {
+      method: "POST",
+      body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+    });
+    const body = await res.json();
 
-    if (!user || !verifyPassword(password, user.password_hash)) {
-      return NextResponse.json({ success: false, error: "That email and password don't match." }, { status: 401 });
+    if (!res.ok) {
+      const unconfirmed = body?.error_code === "email_not_confirmed";
+      const error = unconfirmed ? "Confirm your email first. Check your inbox for the link we sent." : res.status === 429 ? "Too many attempts. Wait a few minutes and try again." : "That email and password don't match.";
+      return NextResponse.json({ success: false, error }, { status: res.status === 429 ? 429 : 401 });
     }
 
-    const safeUser = { id: user.id, email: user.email, name: user.name, company: user.company, role: user.role };
-
-    const response = NextResponse.json({ success: true, user: safeUser });
-    response.cookies.set("fremwork_session", safeUser.id, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-      path: "/",
-    });
-
+    const response = NextResponse.json({ success: true, user: await verifyAccessToken(body.access_token) });
+    setSessionCookies(response, body);
     return response;
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: authError(null, err.message) }, { status: 500 });
   }
 }

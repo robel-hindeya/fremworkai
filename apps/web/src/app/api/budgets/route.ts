@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authed } from "@/lib/server/with-user";
 import { BudgetsRepo } from "@/lib/server/repositories/budgets";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export const GET = authed(async () => {
   try {
     const data = BudgetsRepo.getAll();
     return NextResponse.json({ success: true, count: data.length, data });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = authed(async (req: NextRequest) => {
   try {
     const body = await req.json();
     if (!body.k || !body.budget) {
@@ -30,4 +31,4 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});

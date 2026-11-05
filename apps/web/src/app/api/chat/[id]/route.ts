@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authed } from "@/lib/server/with-user";
 import { ChatRepo } from "@/lib/server/repositories/chat";
 
 export const runtime = "nodejs";
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const GET = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
     const convo = ChatRepo.getConversation(id);
@@ -12,9 +13,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});
 
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PUT = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
     const body = await req.json();
@@ -26,9 +27,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
     const ok = ChatRepo.deleteConversation(id);
@@ -37,4 +38,4 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});

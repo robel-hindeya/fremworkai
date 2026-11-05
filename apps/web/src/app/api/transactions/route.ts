@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authed } from "@/lib/server/with-user";
 import { TransactionsRepo } from "@/lib/server/repositories/transactions";
 
 export const runtime = "nodejs";
 
-export async function GET(req: NextRequest) {
+export const GET = authed(async (req: NextRequest) => {
   try {
     const { searchParams } = new URL(req.url);
     const search = searchParams.get("search") || undefined;
@@ -17,9 +18,9 @@ export async function GET(req: NextRequest) {
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = authed(async (req: NextRequest) => {
   try {
     const body = await req.json();
     if (!body.name || !body.amt || !body.date) {
@@ -40,4 +41,4 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});

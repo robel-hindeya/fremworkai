@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authed } from "@/lib/server/with-user";
 import { ChatRepo } from "@/lib/server/repositories/chat";
 import { AgentError, runFinancialAgent } from "@/lib/server/agent/engine";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export const GET = authed(async () => {
   try {
     const list = ChatRepo.getAllConversations();
     return NextResponse.json({ success: true, count: list.length, data: list });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = authed(async (req: NextRequest) => {
   try {
     const { conversationId, text, files, mode = "Balanced", retry = false } = await req.json();
 
@@ -51,4 +52,4 @@ export async function POST(req: NextRequest) {
     const status = err instanceof AgentError ? 502 : 500;
     return NextResponse.json({ success: false, error: err.message }, { status });
   }
-}
+});

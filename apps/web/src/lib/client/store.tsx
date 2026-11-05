@@ -54,14 +54,25 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [txs, bgs, gls, prjs, tsks, met, me] = await Promise.all([
+      const me = await api.get<{ user: User | null }>("/api/auth/me");
+      setUser(me.user);
+      if (!me.user) {
+        setTransactions([]);
+        setBudgets([]);
+        setGoals([]);
+        setProjects([]);
+        setTasks([]);
+        setMetrics(null);
+        return;
+      }
+
+      const [txs, bgs, gls, prjs, tsks, met] = await Promise.all([
         api.get<any[]>("/api/transactions"),
         api.get<any[]>("/api/budgets"),
         api.get<any[]>("/api/goals"),
         api.get<any[]>("/api/projects"),
         api.get<any[]>("/api/scheduled"),
         api.get<FinancialSummary>("/api/analytics"),
-        api.get<{ user: User | null }>("/api/auth/me"),
       ]);
 
       // Normalize transactions
@@ -130,7 +141,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setProjects(mappedProjects);
       setTasks(mappedTasks);
       setMetrics(met);
-      setUser(me.user);
       setError(null);
     } catch (err: any) {
       setError(err.message || "Failed to load data");

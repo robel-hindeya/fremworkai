@@ -17,6 +17,7 @@ export default function SignUp() {
   const [tried, setTried] = useState(false);
   const [apiError, setApiError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
 
   const e = {
     name: !v.name.trim() ? "Enter your name." : "",
@@ -36,20 +37,30 @@ export default function SignUp() {
     setApiError("");
 
     try {
-      await api.post("/api/auth/sign-up", {
+      const res = await api.post<{ needsConfirmation?: boolean }>("/api/auth/sign-up", {
         name: v.name.trim(),
         email: v.email.trim(),
         company: v.company.trim(),
         password: v.pw,
       });
+      if (res.needsConfirmation) return setConfirm(true);
       await refresh();
-      router.push("/onboarding");
+      router.push("/chat");
     } catch (err: any) {
       setApiError(err.message || "Failed to create account");
     } finally {
       setBusy(false);
     }
   };
+
+  if (confirm) {
+    return (
+      <div className="auth-form">
+        <div><h1>Check your email</h1><p className="muted" style={{ margin: "6px 0 0" }}>We sent a confirmation link to <b style={{ color: "var(--ink)" }}>{v.email.trim()}</b>. Open it to finish creating your account.</p></div>
+        <p className="muted" style={{ margin: 0, textAlign: "center" }}>Already confirmed? <Link href="/sign-in" style={{ fontWeight: 500, textDecoration: "none" }}>Sign in</Link></p>
+      </div>
+    );
+  }
 
   return (
     <form className="auth-form" noValidate onSubmit={submit}>

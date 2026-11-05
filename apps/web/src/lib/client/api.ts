@@ -28,6 +28,10 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
 
   const json = await res.json().catch(() => ({}));
 
+  if (res.status === 401 && !url.startsWith('/api/auth/') && typeof window !== 'undefined') {
+    window.location.assign('/sign-in');
+  }
+
   if (!res.ok) {
     const errorDetails = json.error || {};
     const message =

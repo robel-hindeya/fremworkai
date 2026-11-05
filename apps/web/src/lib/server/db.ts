@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,38 +7,32 @@ import path from "node:path";
 // Vercel's app folder is read-only, so only the temp folder is writable there.
 // Temp storage is wiped when the server instance restarts.
 const DATA_DIR = process.env.VERCEL ? path.join(os.tmpdir(), "fremwork") : path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "fremwork.sqlite");
 
-let _db: DatabaseSync | null = null;
+/** The signed-in user for the current request. Each user has their own database file. */
+export const userScope = new AsyncLocalStorage<string>();
+
+const databases = new Map<string, DatabaseSync>();
 
 export function getDb(): DatabaseSync {
-  if (_db) return _db;
+  const userId = userScope.getStore();
+  if (!userId) throw new Error("No signed-in user for this request.");
 
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
+  const existing = databases.get(userId);
+  if (existing) return existing;
 
-  _db = new DatabaseSync(DB_PATH);
-  _db.exec("PRAGMA journal_mode = WAL;");
-  _db.exec("PRAGMA synchronous = NORMAL;");
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 
-  initSchema(_db);
+  const db = new DatabaseSync(path.join(DATA_DIR, `user-${userId.replace(/[^a-zA-Z0-9-]/g, "")}.sqlite`));
+  db.exec("PRAGMA journal_mode = WAL;");
+  db.exec("PRAGMA synchronous = NORMAL;");
+  initSchema(db);
 
-  return _db;
+  databases.set(userId, db);
+  return db;
 }
 
 function initSchema(db: DatabaseSync) {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      name TEXT NOT NULL,
-      company TEXT NOT NULL,
-      role TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS transactions (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
