@@ -1,8 +1,11 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+// Vercel's app folder is read-only, so only the temp folder is writable there.
+// Temp storage is wiped when the server instance restarts.
+const DATA_DIR = process.env.VERCEL ? path.join(os.tmpdir(), "fremwork") : path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "fremwork.sqlite");
 
 let _db: DatabaseSync | null = null;
