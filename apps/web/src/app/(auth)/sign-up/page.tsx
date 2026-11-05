@@ -2,12 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { Mail } from "lucide-react";
+import { useEffect, useState } from "react";
 import { PasswordField, passwordRule } from "@/components/auth-bits";
 import { Banner, Field, FieldError } from "@/components/ui";
 import { isEmail } from "@/lib/format";
 import { api } from "@/lib/client/api";
 import { useData } from "@/lib/client/store";
+
+/** Seconds between confirmation emails; Supabase rejects faster repeats. */
+const RESEND_WAIT = 60;
 
 export default function SignUp() {
   const router = useRouter();
@@ -18,6 +22,15 @@ export default function SignUp() {
   const [apiError, setApiError] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [resending, setResending] = useState(false);
+  const [resendNote, setResendNote] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown(cooldown - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
 
   const e = {
     name: !v.name.trim() ? "Enter your name." : "",
@@ -43,7 +56,10 @@ export default function SignUp() {
         company: v.company.trim(),
         password: v.pw,
       });
-      if (res.needsConfirmation) return setConfirm(true);
+      if (res.needsConfirmation) {
+        setCooldown(RESEND_WAIT);
+        return setConfirm(true);
+      }
       await refresh();
       router.push("/chat");
     } catch (err: any) {
@@ -53,10 +69,28 @@ export default function SignUp() {
     }
   };
 
+  const resend = async () => {
+    setResending(true);
+    setResendNote(null);
+    try {
+      await api.post("/api/auth/resend", { email: v.email.trim() });
+      setResendNote({ tone: "ok", text: "Email sent. It can take a few minutes to arrive." });
+      setCooldown(RESEND_WAIT);
+    } catch (x: any) {
+      setResendNote({ tone: "err", text: x.message || "We couldn't resend the email. Try again." });
+    } finally {
+      setResending(false);
+    }
+  };
+
   if (confirm) {
     return (
       <div className="auth-form">
+        <span className="ic-box" style={{ width: 48, height: 48, borderRadius: "50%" }}><Mail size={22} /></span>
         <div><h1>Check your email</h1><p className="muted" style={{ margin: "6px 0 0" }}>We sent a confirmation link to <b style={{ color: "var(--ink)" }}>{v.email.trim()}</b>. Open it to finish creating your account.</p></div>
+        {resendNote && <Banner tone={resendNote.tone}>{resendNote.text}</Banner>}
+        <p className="muted" style={{ margin: 0 }}>It can take a few minutes to arrive. If you can’t find it, check your spam folder.</p>
+        <button type="button" className="btn lg block" onClick={resend} disabled={resending || cooldown > 0}>{resending ? "Sending…" : cooldown > 0 ? `Resend email in ${cooldown}s` : "Resend email"}</button>
         <p className="muted" style={{ margin: 0, textAlign: "center" }}>Already confirmed? <Link href="/sign-in" style={{ fontWeight: 500, textDecoration: "none" }}>Sign in</Link></p>
       </div>
     );
