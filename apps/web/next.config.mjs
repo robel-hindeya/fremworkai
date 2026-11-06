@@ -1,9 +1,18 @@
 /** @type {import('next').NextConfig} */
 const API_URL = process.env.API_URL;
+// Sign-up and login live on the Fremwork website, which hands the session back to /auth/callback.
+const LANDING_URL = process.env.LANDING_URL || 'https://www.fremwork.com';
 
 const nextConfig = {
   reactStrictMode: true,
   serverExternalPackages: ['node:sqlite'],
+  async redirects() {
+    return [
+      { source: '/sign-in', destination: `${LANDING_URL}/login`, permanent: false },
+      { source: '/sign-up', destination: `${LANDING_URL}/signup`, permanent: false },
+      { source: '/forgot-password', destination: `${LANDING_URL}/login`, permanent: false },
+    ];
+  },
   async rewrites() {
     if (API_URL) {
       return [
